@@ -1,0 +1,6 @@
+title: "팝콘TV"
+version: "1.0.0"
+package_name: "ff_pktv"
+developer: "ssagajikorea"
+description: "팝콘TV 방송 FF플러그인"
+home: "https://github.com/ssagajikorea/ff_pktv"

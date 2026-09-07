@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+
+{{ macros.m_button_group([['globalSettingSaveBtn', '설정 저장'], ['token_delete_btn', '토큰 초기화'], ['login_check_btn', '로그인 확인']])}}
+{{ macros.m_row_start('5') }}
+{{ macros.m_row_end() }}
+
+<nav>
+  {{ macros.m_tab_head_start() }}
+  {{ macros.m_tab_head('normal', '설정', true) }}
+  {{ macros.m_tab_head('db', 'DB', false) }}
+  {{ macros.m_tab_head('api', 'API', false) }}
+  {{ macros.m_tab_head_end() }}
+</nav>
+<form id='setting' name='setting'>
+  <div class="tab-content" id="nav-tabContent">
+    {{ macros.m_tab_content_start('normal', true) }}
+    {{ macros.info_text_go('hls_playback', 'Native HLS Playback', value=arg['hls_playback'], desc=['웹에서 사용시 크롬확장프로그램 설치하세요']) }}
+    {{ macros.m_hr() }}
+    {{ macros.setting_input_text('username', '아이디', value=arg['username'], desc=['아이디']) }}
+    {{ macros.setting_input_text('password', '패스워드', value=arg['password'], type='password', desc=[' - 아이디 패스워드를 입력안하면 로그인하지 않고 19세 미만 동영상을 볼수있습니다.',' - 아이디 패스워드 입력시 설정 저장 누르시고 세션 삭제를 한번 눌러야 로그인이 적용됩니다.',' - 홈페이지 성인 인증을 받아야 성인 방송을 볼수있습니다.']) }}
+    {{ macros.setting_input_int('token_refresh_hour', '토큰 갱신 시간', value=arg['token_refresh_hour'], desc=['유저 토큰 갱신 간격. HOUR 단위']) }}
+    <!-- {{ macros.setting_select('use_quality', '화질', [['1920x1080','FHD'], ['1280x720','HD'], ['960x540', 'SD']],
+    col='3', value=arg['use_quality'])}} -->
+    {{ macros.setting_radio_with_value('streaming_type', '스트리밍 타입', [['redirect', 'Redirect'],['direct', 'Direct'] , ['proxy',
+    'Proxy']], value=arg['streaming_type'], desc=[' - Redirect: 가장 좋지만 Player에 따라 10분 후 중지될 수 있습니다. 중지가 안된다면 이
+    방법으로 사용하세요. 동일 네트워크의 Tvheadend에 연결할 때 사용합니다.', '- Direct: FF와 Player가 동일 네트워크 일 때 사용합니다. Proxy 옵션보다 성능이 좋습니다.',' - Proxy: 타 네트워크에서 재생할 때 사용합니다. FF가 방송 데이터를 받아서 Player에 보냅니다.']) }}
+    {{ macros.setting_checkbox('use_proxy', 'Proxy1 사용', value=arg['use_proxy'], desc=['URL을 얻을 때만 사용']) }}
+    {{ macros.setting_checkbox('use_proxy2', 'Proxy2 재생시 사용', value=arg['use_proxy2'], desc=['Direct, Proxy 사용시']) }}
+    {{ macros.setting_input_text('proxy_url', 'Proxy URL', value=arg['proxy_url'], desc=['http://id:pass@ip:port or http://ip:port']) }}
+    {{ macros.m_tab_content_end() }}
+
+    {{ macros.m_tab_content_start('db', false) }}
+    {{ macros.setting_input_text_and_buttons('main_db_delete_day', 'DB 삭제 기간', [['globalDbDeleteDayBtn', '기간 적용 삭제', [['tag_id','main_db_delete_day']]], ['globalDbDeleteBtn', '전체 삭제']], value=arg['main_db_delete_day'], col='6') }} 
+    {{ macros.setting_checkbox('main_db_auto_delete', 'DB 자동 삭제', value=arg['main_db_auto_delete'], desc=['On : 기간 적용하여 DB를 자동 삭제합니다.']) }}
+    {{ macros.m_tab_content_end() }} 
+
+    {{ macros.m_tab_content_start('api', false) }}
+    {{ macros.info_text_go('api_m3u', 'M3U', value=arg['api_m3u']) }}
+    {{ macros.info_text_go('api_playlist', 'PLAYLIST', value=arg['api_playlist']) }}
+    {{ macros.info_text_go('api_yaml', 'YAML', value=arg['api_yaml']) }}
+    {{ macros.m_tab_content_end() }}
+  </div>
+</form>
+
+<script type="text/javascript">
+
+$("body").on('click', '#yaml_select_btn', function (e) {
+  e.preventDefault();
+  path_data = $(this).data('path_data');
+  globalSelectLocalFile("파일 선택", path_data, function (ret) {
+    $('#yaml_path').val(ret);
+  });
+});
+
+$("body").on('click', '#login_check_btn', function(e){
+  e.preventDefault();
+  globalSendCommand('login_check');
+});
+
+$("body").on('click', '#token_delete_btn', function(e){
+  e.preventDefault();
+  globalSendCommand('token_delete');
+});
+
+</script>
+
+{% endblock %}
