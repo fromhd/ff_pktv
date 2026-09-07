@@ -72,10 +72,14 @@ class ModuleMain(PluginModuleBase):
                 query_params = parse_qs(parsed_url.query)
 
                 cast_id = query_params.get("cast_id")[0]
-                cast_partner_code = query_params.get("cast_partner_code")[0]
+                cast_partner_code = query_params.get("cast_partner_code", ["POPKONTV"])[0]
                 cast_start_date = query_params.get("cast_start_date", [None])[0]
                 url = PKTV_Handler.get_live_view(cast_id, cast_partner_code, token, self.web_list_model, cast_start_date=cast_start_date)
-            ret = {"ret": "success", "data": url}
+            if url:
+                ret = {"ret": "success", "data": url}
+            else:
+                err_msg = getattr(PKTV_Handler, 'LAST_ERROR', None) or "스트림 주소를 가져오지 못했습니다."
+                ret = {"ret": "error", "data": None, "msg": err_msg}
         elif command == "login_check":
             data = self.token_refresh(force=True)
             ret = {"ret": "success", "json": data}

@@ -18,6 +18,7 @@ from .setup import *
 class PKTV_Handler:
     SOURCES = "POPKONTV"
     CHANNELS = []
+    LAST_ERROR = None
     USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     CLIENT_KEY = "Client FpAhe6mh8Qtz116OENBmRddbYVirNKasktdXQiuHfm88zRaFydTsFy63tzkdZY0u"
     DEFAULT_HEADER = {
@@ -244,6 +245,8 @@ class PKTV_Handler:
         user_info = cls.parse_token(token)
         user_token = user_info.get("token")
 
+        cls.LAST_ERROR = None
+
         # 1. Resolve cast_start_date and cast_partner_code if missing
         if not cast_start_date:
             cached = [c for c in (cls.CHANNELS or []) if c.get("cast_id") == cast_id]
@@ -273,7 +276,8 @@ class PKTV_Handler:
                     P.logger.error(f"mcinfo 요청 오류: {str(e)}")
 
         if not cast_start_date:
-            P.logger.error(f"방송 시작 정보를 찾을 수 없습니다: cast_id={cast_id}")
+            cls.LAST_ERROR = f"방송 시작 정보를 찾을 수 없습니다: cast_id={cast_id}"
+            P.logger.error(cls.LAST_ERROR)
             return None
 
         cast_code = f"{cast_id}-{cast_start_date}"
@@ -319,12 +323,24 @@ class PKTV_Handler:
             if response.status_code == 200:
                 res = response.json()
                 if res.get("statusCd") not in ("L0000", "S2000"):
-                    P.logger.error(f"PopkonTV 방송 시청 요청 실패: {res.get('statusMsg')} (code: {res.get('statusCd')})")
+                    err_code = res.get("statusCd", "")
+                    err_msg = res.get("statusMsg", "방송 시청 요청 실패")
+                    if err_code == "L0001":
+                        err_msg = "성인 방송은 로그인이 필요합니다. [설정] 메뉴에서 성인인증된 팝콘TV 계정을 입력해주세요."
+                    elif err_code == "L0002":
+                        err_msg = "비공개(비밀번호) 방송입니다."
+                    elif err_code == "L0003":
+                        err_msg = "팬클럽 전용 방송입니다."
+                    elif err_code == "L0004":
+                        err_msg = "유료 결제 방송입니다."
+                    cls.LAST_ERROR = err_msg
+                    P.logger.error(f"PopkonTV 방송 시청 요청 실패: {err_msg} (code: {err_code})")
                     return None
 
                 cast_hls_url = res.get("data", {}).get("castHlsUrl")
                 if not cast_hls_url:
-                    P.logger.error(f"PopkonTV HLS URL 없음: {res}")
+                    cls.LAST_ERROR = "PopkonTV HLS URL 없음"
+                    P.logger.error(f"{cls.LAST_ERROR}: {res}")
                     return None
 
                 # Resolve master playlist into chunklist m3u8
@@ -363,10 +379,12 @@ class PKTV_Handler:
 
                 return m3u8_url
             else:
-                P.logger.error(f"방송 시청 API HTTP 오류: {response.status_code}")
+                cls.LAST_ERROR = f"방송 시청 API HTTP 오류 ({response.status_code})"
+                P.logger.error(cls.LAST_ERROR)
                 return None
         except Exception as e:
-            P.logger.error(f"get_live_view 예외: {str(e)}")
+            cls.LAST_ERROR = f"get_live_view 예외: {str(e)}"
+            P.logger.error(cls.LAST_ERROR)
             P.logger.error(traceback.format_exc())
             return None
 
