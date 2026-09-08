@@ -6,6 +6,7 @@ FlaskFarm (SJVA) Plugin for PopkonTV (팝콘TV)
 
 ## 저장소 (Repository)
 - GitHub: [https://github.com/fromhd/ff_pktv](https://github.com/fromhd/ff_pktv)
+- 원출처 (Original Repository): [https://github.com/ssagajikorea/ff_pktv](https://github.com/ssagajikorea/ff_pktv) (by ssagajikorea)
 
 ## 주요 기능
 - 최신 PopkonTV Next.js REST API 연동
