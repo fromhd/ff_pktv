@@ -247,33 +247,36 @@ class PKTV_Handler:
 
         cls.LAST_ERROR = None
 
-        # 1. Resolve cast_start_date and cast_partner_code if missing
+        # 1. Resolve authoritative broadcast info via mcinfo
+        mc_info_url = "https://www.popkontv.com/api/proxy/broadcast/v1.1/mcinfo"
+        h = {
+            "Content-Type": "application/json",
+        }
+        if user_token:
+            h["Authorization"] = f"Bearer {user_token}"
+        p = {
+            "castId": cast_id,
+            "castPartnerCode": cast_partner_code or "P-00001",
+            "partnerCode": user_info.get("partnerCode", "P-00001"),
+        }
+        cast_type = "0"
+        try:
+            r = cls.call_request("POST", mc_info_url, json_data=p, headers=h, proxies=proxies)
+            if r.status_code == 200:
+                mc_res = r.json()
+                if mc_res.get("statusCd") == "S2000" and mc_res.get("data"):
+                    mc_data = mc_res["data"]
+                    cast_start_date = mc_data.get("mc_castStartDate") or cast_start_date
+                    cast_partner_code = mc_data.get("mc_partnerCode") or cast_partner_code
+                    cast_type = mc_data.get("castType") or "0"
+        except Exception as e:
+            P.logger.error(f"mcinfo 요청 오류: {str(e)}")
+
         if not cast_start_date:
             cached = [c for c in (cls.CHANNELS or []) if c.get("cast_id") == cast_id]
             if cached and cached[0].get("cast_start_date"):
                 cast_start_date = cached[0]["cast_start_date"]
                 cast_partner_code = cached[0].get("cast_partner_code") or cast_partner_code
-            else:
-                mc_info_url = "https://www.popkontv.com/api/proxy/broadcast/v1.1/mcinfo"
-                h = {
-                    "Content-Type": "application/json",
-                }
-                if user_token:
-                    h["Authorization"] = f"Bearer {user_token}"
-                p = {
-                    "castId": cast_id,
-                    "castPartnerCode": cast_partner_code or "P-00001",
-                    "partnerCode": user_info.get("partnerCode", "P-00001"),
-                }
-                try:
-                    r = cls.call_request("POST", mc_info_url, json_data=p, headers=h, proxies=proxies)
-                    if r.status_code == 200:
-                        mc_res = r.json()
-                        if mc_res.get("statusCd") == "S2000" and mc_res.get("data"):
-                            cast_start_date = mc_res["data"].get("mc_castStartDate")
-                            cast_partner_code = mc_res["data"].get("mc_partnerCode", cast_partner_code)
-                except Exception as e:
-                    P.logger.error(f"mcinfo 요청 오류: {str(e)}")
 
         if not cast_start_date:
             cls.LAST_ERROR = f"방송 시작 정보를 찾을 수 없습니다: cast_id={cast_id}"
@@ -294,7 +297,7 @@ class PKTV_Handler:
                 "castCode": cast_code,
                 "castPartnerCode": cast_partner_code or "P-00001",
                 "castSignId": cast_id,
-                "castType": "0",
+                "castType": cast_type,
                 "commandType": 0,
                 "exePath": 0,
                 "isSecret": 0,
@@ -310,7 +313,7 @@ class PKTV_Handler:
                 "castCode": cast_code,
                 "castPartnerCode": cast_partner_code or "P-00001",
                 "castSignId": cast_id,
-                "castType": "0",
+                "castType": cast_type,
                 "commandType": 0,
                 "exePath": 0,
                 "partnerCode": "P-00001",
