@@ -36,45 +36,56 @@ class PKTV_Handler:
         updated_headers = cls.DEFAULT_HEADER.copy()
         if headers:
             updated_headers.update(headers)
-        if http_method == "GET":
-            response = requests.get(
-                url,
-                params=params,
-                headers=updated_headers,
-                cookies=cookies,
-                allow_redirects=redirects,
-                proxies=proxies,
-                stream=stream,
-                verify=verify,
-                timeout=timeout,
-            )
-        elif http_method == "GET_NO_DEFAULT":
-            response = requests.get(
-                url,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                allow_redirects=redirects,
-                proxies=proxies,
-                stream=stream,
-                verify=verify,
-                timeout=timeout,
-            )
-        elif http_method == "POST":
-            response = requests.post(
-                url,
-                data=payload,
-                json=json_data,
-                params=params,
-                headers=updated_headers,
-                cookies=cookies,
-                allow_redirects=redirects,
-                proxies=proxies,
-                stream=stream,
-                verify=verify,
-                timeout=timeout,
-            )
-        return response
+        if proxies:
+            updated_headers["Connection"] = "close"
+
+        for attempt in range(2):
+            try:
+                if http_method == "GET":
+                    response = requests.get(
+                        url,
+                        params=params,
+                        headers=updated_headers,
+                        cookies=cookies,
+                        allow_redirects=redirects,
+                        proxies=proxies,
+                        stream=stream,
+                        verify=verify,
+                        timeout=timeout,
+                    )
+                elif http_method == "GET_NO_DEFAULT":
+                    response = requests.get(
+                        url,
+                        params=params,
+                        headers=headers,
+                        cookies=cookies,
+                        allow_redirects=redirects,
+                        proxies=proxies,
+                        stream=stream,
+                        verify=verify,
+                        timeout=timeout,
+                    )
+                elif http_method == "POST":
+                    response = requests.post(
+                        url,
+                        data=payload,
+                        json=json_data,
+                        params=params,
+                        headers=updated_headers,
+                        cookies=cookies,
+                        allow_redirects=redirects,
+                        proxies=proxies,
+                        stream=stream,
+                        verify=verify,
+                        timeout=timeout,
+                    )
+                return response
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                if attempt == 0:
+                    import time
+                    time.sleep(0.5)
+                    continue
+                raise
 
     @classmethod
     def parse_token(cls, token):
@@ -175,10 +186,21 @@ class PKTV_Handler:
                     if len(items) < page_size or page >= 5:
                         break
                     page += 1
+                elif response.status_code in (400, 401) and "Authorization" in headers:
+                    P.logger.warning(f"PopkonTV 토큰 오류({response.status_code}), 게스트 모드로 목록 재시도")
+                    del headers["Authorization"]
+                    payload["signId"] = ""
+                    continue
                 else:
+                    P.logger.error(f"PopkonTV livelist HTTP 오류: {response.status_code}")
                     break
             except Exception as e:
                 P.logger.error(f"PopkonTV 방송 목록 조회 예외: {str(e)}")
+                if "Authorization" in headers:
+                    P.logger.warning("PopkonTV 방송 목록 조회 예외 발생으로 게스트 모드 1회 재시도")
+                    del headers["Authorization"]
+                    payload["signId"] = ""
+                    continue
                 break
 
         return all_channels

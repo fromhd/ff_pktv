@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta
+import base64
+import json
 import os
+import time
 from urllib.parse import parse_qs, urlparse
 
 from tool import ToolUtil
@@ -124,16 +127,40 @@ class ModuleMain(PluginModuleBase):
         form = "%Y-%m-%d %H:%M:%S"
         if force:
             flag = True
-        if flag == False and P.ModelSetting.get("token") == "":
+        token_str = P.ModelSetting.get("token")
+        if not flag and not token_str:
             flag = True
-        if flag == False:
+        if not flag:
+            # Check JWT expiration (PopkonTV access token lifetime is 15 minutes / 900s)
+            try:
+                token_dict = json.loads(token_str)
+                jwt_token = token_dict.get("token", "")
+                if jwt_token and "." in jwt_token:
+                    payload_part = jwt_token.split(".")[1]
+                    payload_part += "=" * (-len(payload_part) % 4)
+                    payload = json.loads(base64.b64decode(payload_part).decode("utf-8"))
+                    exp = payload.get("exp", 0)
+                    # If expired or expiring within 120 seconds, automatically re-login!
+                    if time.time() >= (exp - 120):
+                        P.logger.info(f"PopkonTV 토큰 만료 감지 (남은 시간: {int(exp - time.time())}초), 자동 갱신 진행")
+                        flag = True
+                else:
+                    flag = True
+            except Exception:
+                flag = True
+
+        if not flag:
             last_time_str = P.ModelSetting.get("token_time")
             if last_time_str == "":
                 flag = True
             else:
-                last_time = datetime.strptime(last_time_str, form)
-                if last_time + timedelta(hours=P.ModelSetting.get_int("token_refresh_hour")) < datetime.now():
+                try:
+                    last_time = datetime.strptime(last_time_str, form)
+                    if last_time + timedelta(hours=P.ModelSetting.get_int("token_refresh_hour")) < datetime.now():
+                        flag = True
+                except Exception:
                     flag = True
+
         if flag:
             data = PKTV_Handler.login(P.ModelSetting.get("username"), P.ModelSetting.get("password"))
             if data:
