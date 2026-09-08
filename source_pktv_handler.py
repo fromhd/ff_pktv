@@ -191,13 +191,21 @@ class PKTV_Handler:
         for idx, item in enumerate(items):
             sign_id = item.get("signId", "")
             cast_partner_code = item.get("partnerCode", "P-00001")
-            cast_start_date = item.get("castStartDateCode", "")
+
+            # Use authoritative session start date from pkCastCode
+            pk_cast_code = item.get("pkCastCode", "")
+            if pk_cast_code and "-" in pk_cast_code:
+                cast_start_date = pk_cast_code.split("-", 1)[1]
+            else:
+                cast_start_date = item.get("castStartDateCode", "")
+
             title = (item.get("castTitle") or "").strip()
             nickname = (item.get("nickName") or "").strip()
             count = item.get("watchCnt", 0)
             is_adult = item.get("isAdult") == 1
             is_pay = item.get("pay") == 1
             is_fan = item.get("isFan") == 1
+            cast_type = str(item.get("castType", 0))
             logo = item.get("pfileName") or item.get("onErrorImg") or ""
 
             icon = []
@@ -222,6 +230,7 @@ class PKTV_Handler:
                     "cast_id": sign_id,
                     "cast_partner_code": cast_partner_code,
                     "cast_start_date": str(cast_start_date),
+                    "cast_type": cast_type,
                     "logo": logo,
                     "channel": nickname.replace(",", "."),
                     "current": current.replace(",", "."),
@@ -246,90 +255,153 @@ class PKTV_Handler:
         user_token = user_info.get("token")
 
         cls.LAST_ERROR = None
-
-        # 1. Resolve authoritative broadcast info via mcinfo
-        mc_info_url = "https://www.popkontv.com/api/proxy/broadcast/v1.1/mcinfo"
-        h = {
-            "Content-Type": "application/json",
-        }
-        if user_token:
-            h["Authorization"] = f"Bearer {user_token}"
-        p = {
-            "castId": cast_id,
-            "castPartnerCode": cast_partner_code or "P-00001",
-            "partnerCode": user_info.get("partnerCode", "P-00001"),
-        }
         cast_type = "0"
-        try:
-            r = cls.call_request("POST", mc_info_url, json_data=p, headers=h, proxies=proxies)
-            if r.status_code == 200:
-                mc_res = r.json()
-                if mc_res.get("statusCd") == "S2000" and mc_res.get("data"):
-                    mc_data = mc_res["data"]
-                    cast_start_date = mc_data.get("mc_castStartDate") or cast_start_date
-                    cast_partner_code = mc_data.get("mc_partnerCode") or cast_partner_code
-                    cast_type = mc_data.get("castType") or "0"
-        except Exception as e:
-            P.logger.error(f"mcinfo 요청 오류: {str(e)}")
 
+        # Check cached channel list first
+        cached = [c for c in (cls.CHANNELS or []) if c.get("cast_id") == cast_id]
+        if cached:
+            ch_info = cached[0]
+            if not cast_start_date:
+                cast_start_date = ch_info.get("cast_start_date")
+            cast_partner_code = cast_partner_code or ch_info.get("cast_partner_code")
+            cast_type = ch_info.get("cast_type", "0")
+
+        # If still missing start date, fetch from livelist
         if not cast_start_date:
-            cached = [c for c in (cls.CHANNELS or []) if c.get("cast_id") == cast_id]
-            if cached and cached[0].get("cast_start_date"):
-                cast_start_date = cached[0]["cast_start_date"]
-                cast_partner_code = cached[0].get("cast_partner_code") or cast_partner_code
+            items = cls.get_list_data(token)
+            for it in items:
+                if it.get("signId") == cast_id:
+                    pk = it.get("pkCastCode", "")
+                    if pk and "-" in pk:
+                        cast_start_date = pk.split("-", 1)[1]
+                    else:
+                        cast_start_date = it.get("castStartDateCode", "")
+                    cast_partner_code = it.get("partnerCode", cast_partner_code)
+                    cast_type = str(it.get("castType", 0))
+                    break
 
         if not cast_start_date:
             cls.LAST_ERROR = f"방송 시작 정보를 찾을 수 없습니다: cast_id={cast_id}"
             P.logger.error(cls.LAST_ERROR)
             return None
 
-        cast_code = f"{cast_id}-{cast_start_date}"
         headers = {
             "Content-Type": "application/json",
             "Referer": "https://www.popkontv.com/live-more",
         }
 
-        if user_token:
-            watch_url = "https://www.popkontv.com/api/proxy/broadcast/v1/castwatchonoff"
-            headers["Authorization"] = f"Bearer {user_token}"
-            payload = {
-                "androidStore": 0,
-                "castCode": cast_code,
-                "castPartnerCode": cast_partner_code or "P-00001",
-                "castSignId": cast_id,
-                "castType": cast_type,
-                "commandType": 0,
-                "exePath": 0,
-                "isSecret": 0,
-                "partnerCode": user_info.get("partnerCode", "P-00001"),
-                "password": "",
-                "signId": user_info.get("signId", ""),
-                "version": "4.6.2",
-            }
-        else:
-            watch_url = "https://www.popkontv.com/api/proxy/broadcast/v1/castwatchonoffguest"
-            payload = {
-                "androidStore": 0,
-                "castCode": cast_code,
-                "castPartnerCode": cast_partner_code or "P-00001",
-                "castSignId": cast_id,
-                "castType": cast_type,
-                "commandType": 0,
-                "exePath": 0,
-                "partnerCode": "P-00001",
-                "password": "",
-                "version": "4.6.2",
-            }
+        # Try requesting watch stream (retry once with fresh livelist if E5: broadcast desynchronized/restarted)
+        for attempt in range(2):
+            cast_code = f"{cast_id}-{cast_start_date}"
 
-        try:
-            response = cls.call_request("POST", watch_url, json_data=payload, headers=headers, proxies=proxies)
-            if response.status_code == 200:
-                res = response.json()
-                if res.get("statusCd") not in ("L0000", "S2000"):
+            if user_token:
+                watch_url = "https://www.popkontv.com/api/proxy/broadcast/v1/castwatchonoff"
+                headers["Authorization"] = f"Bearer {user_token}"
+                payload = {
+                    "androidStore": 0,
+                    "castCode": cast_code,
+                    "castPartnerCode": cast_partner_code or "P-00001",
+                    "castSignId": cast_id,
+                    "castType": cast_type,
+                    "commandType": 0,
+                    "exePath": 0,
+                    "isSecret": 0,
+                    "partnerCode": user_info.get("partnerCode", "P-00001"),
+                    "password": "",
+                    "signId": user_info.get("signId", ""),
+                    "version": "4.6.2",
+                }
+            else:
+                watch_url = "https://www.popkontv.com/api/proxy/broadcast/v1/castwatchonoffguest"
+                payload = {
+                    "androidStore": 0,
+                    "castCode": cast_code,
+                    "castPartnerCode": cast_partner_code or "P-00001",
+                    "castSignId": cast_id,
+                    "castType": cast_type,
+                    "commandType": 0,
+                    "exePath": 0,
+                    "partnerCode": "P-00001",
+                    "password": "",
+                    "version": "4.6.2",
+                }
+
+            try:
+                response = cls.call_request("POST", watch_url, json_data=payload, headers=headers, proxies=proxies)
+                if response.status_code == 200:
+                    res = response.json()
+                    if res.get("statusCd") in ("L0000", "S2000"):
+                        cast_hls_url = res.get("data", {}).get("castHlsUrl")
+                        if not cast_hls_url:
+                            cls.LAST_ERROR = "PopkonTV HLS URL 없음"
+                            P.logger.error(f"{cls.LAST_ERROR}: {res}")
+                            return None
+
+                        # Resolve master playlist into chunklist m3u8
+                        m3u8_url = cast_hls_url
+                        try:
+                            r_m3u8 = cls.call_request("GET_NO_DEFAULT", cast_hls_url, headers={"User-Agent": cls.USER_AGENT}, proxies=proxies)
+                            if r_m3u8.status_code == 200:
+                                lines = r_m3u8.text.splitlines()
+                                for line in lines:
+                                    line = line.strip()
+                                    if line.startswith("chunklist"):
+                                        base_url = cast_hls_url[: cast_hls_url.rfind("/") + 1]
+                                        m3u8_url = f"{base_url}{line}"
+                                        break
+                        except Exception as e:
+                            P.logger.error(f"chunklist 해석 오류: {str(e)}")
+
+                        ############# DB ##############
+                        if web_list_model:
+                            try:
+                                cached_ch = [x for x in (cls.CHANNELS or []) if x.get("cast_id") == cast_id]
+                                if cached_ch:
+                                    channel_item = cached_ch[0]
+                                    db_item = web_list_model()
+                                    db_item.url = m3u8_url
+                                    try:
+                                        db_item.ch_id = int(channel_item["id"])
+                                    except Exception:
+                                        db_item.ch_id = abs(hash(cast_id)) % 100000000
+                                    db_item.current = channel_item["current"]
+                                    db_item.channel = channel_item["channel"]
+                                    db_item.save()
+                            except Exception as db_e:
+                                P.logger.error(f"DB 저장 예외: {str(db_e)}")
+                        ############# DB ##############
+
+                        return m3u8_url
+
                     err_code = res.get("statusCd", "")
+                    data_err = res.get("data", {}).get("errorCode", "")
+
+                    # If E5 on first attempt, refresh from livelist and retry
+                    if attempt == 0 and (err_code == "L0001" and data_err == "E5"):
+                        items = cls.get_list_data(token)
+                        found = False
+                        for it in items:
+                            if it.get("signId") == cast_id:
+                                pk = it.get("pkCastCode", "")
+                                if pk and "-" in pk:
+                                    cast_start_date = pk.split("-", 1)[1]
+                                else:
+                                    cast_start_date = it.get("castStartDateCode", "")
+                                cast_partner_code = it.get("partnerCode", cast_partner_code)
+                                cast_type = str(it.get("castType", 0))
+                                found = True
+                                break
+                        if found:
+                            continue
+
                     err_msg = res.get("statusMsg", "방송 시청 요청 실패")
                     if err_code == "L0001":
-                        err_msg = "성인 방송은 로그인이 필요합니다. [설정] 메뉴에서 성인인증된 팝콘TV 계정을 입력해주세요."
+                        if "로그인" in err_msg:
+                            err_msg = "성인 방송은 로그인이 필요합니다. [설정] 메뉴에서 성인인증된 팝콘TV 계정을 입력해주세요."
+                        elif data_err == "E5":
+                            err_msg = "방송이 종료되었거나 존재하지 않습니다."
+                        else:
+                            err_msg = f"방송 시청 불가 ({err_msg})"
                     elif err_code == "L0002":
                         err_msg = "비공개(비밀번호) 방송입니다."
                     elif err_code == "L0003":
@@ -339,57 +411,13 @@ class PKTV_Handler:
                     cls.LAST_ERROR = err_msg
                     P.logger.error(f"PopkonTV 방송 시청 요청 실패: {err_msg} (code: {err_code})")
                     return None
-
-                cast_hls_url = res.get("data", {}).get("castHlsUrl")
-                if not cast_hls_url:
-                    cls.LAST_ERROR = "PopkonTV HLS URL 없음"
-                    P.logger.error(f"{cls.LAST_ERROR}: {res}")
+                else:
+                    P.logger.error(f"방송 시청 API HTTP 오류: {response.status_code}")
                     return None
-
-                # Resolve master playlist into chunklist m3u8
-                m3u8_url = cast_hls_url
-                try:
-                    r_m3u8 = cls.call_request("GET_NO_DEFAULT", cast_hls_url, headers={"User-Agent": cls.USER_AGENT}, proxies=proxies)
-                    if r_m3u8.status_code == 200:
-                        lines = r_m3u8.text.splitlines()
-                        for line in lines:
-                            line = line.strip()
-                            if line.startswith("chunklist"):
-                                base_url = cast_hls_url[: cast_hls_url.rfind("/") + 1]
-                                m3u8_url = f"{base_url}{line}"
-                                break
-                except Exception as e:
-                    P.logger.error(f"chunklist 해석 오류: {str(e)}")
-
-                ############# DB ##############
-                if web_list_model:
-                    try:
-                        cached_ch = [x for x in (cls.CHANNELS or []) if x.get("cast_id") == cast_id]
-                        if cached_ch:
-                            channel_item = cached_ch[0]
-                            db_item = web_list_model()
-                            db_item.url = m3u8_url
-                            try:
-                                db_item.ch_id = int(channel_item["id"])
-                            except Exception:
-                                db_item.ch_id = abs(hash(cast_id)) % 100000000
-                            db_item.current = channel_item["current"]
-                            db_item.channel = channel_item["channel"]
-                            db_item.save()
-                    except Exception as db_e:
-                        P.logger.error(f"DB 저장 예외: {str(db_e)}")
-                ############# DB ##############
-
-                return m3u8_url
-            else:
-                cls.LAST_ERROR = f"방송 시청 API HTTP 오류 ({response.status_code})"
-                P.logger.error(cls.LAST_ERROR)
+            except Exception as e:
+                P.logger.error(f"get_live_view 예외: {str(e)}")
+                P.logger.error(traceback.format_exc())
                 return None
-        except Exception as e:
-            cls.LAST_ERROR = f"get_live_view 예외: {str(e)}"
-            P.logger.error(cls.LAST_ERROR)
-            P.logger.error(traceback.format_exc())
-            return None
 
     @classmethod
     def url_m3u8(cls, req, token, web_list_model):
